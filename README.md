@@ -1,8 +1,8 @@
 # Supply-Chain Integrity Demo
 
-Runnable companion code for the CCS 2026 demo paper *"DEMO: Full-Stack Supply-Chain Integrity Pipeline for Edge AI on Immutable Bootable Containers"*.
+Runnable companion code for the ACM CCS 2026 demo paper *"DEMO: Full-Stack Supply-Chain Integrity Pipeline for Edge AI on Immutable Bootable Containers"*.
 
-The paper proposes a pipeline that signs and attests Bills of Materials at every layer of an edge AI stack (OS, container, AI model), then verifies and rejects tampered artifacts before deployment. This repo implements a local, hardware-free subset of that pipeline for two of its layers, using the same real, off-the-shelf tools (Kairos, Syft, Cosign, CycloneDX, aibomgen-cli) the paper describes.
+The paper proposes a pipeline that signs and attests Bills of Materials at every layer of an edge AI stack (OS, container, AI model), then verifies and rejects tampered artifacts before deployment. This repo implements a local, hardware-free subset of that pipeline, using the same real, off-the-shelf tools (Kairos, Syft, Cosign, CycloneDX, aibomgen-cli) the paper describes.
 
 ## Contents
 
@@ -19,7 +19,7 @@ The paper proposes a pipeline that signs and attests Bills of Materials at every
 This repo is a local, single-machine subset of the full pipeline for the EdgeLab initiative. It does **not** include:
 
 - The EdgeLab cluster itself, K3s, GitOps delivery, or real edge hardware. Instead, the OS-image build uses `kairos-init`'s lightweight `init` stage only, and the AI-model demo quantizes on CPU with `onnxruntime` as a stand-in for a real TensorRT/Metis/... device compiler.
-- A cluster admission controller (e.g. Sigstore `policy-controller`) enforcing policy at schedule time — policy is instead checked directly via `cosign verify-attestation --policy` in each demo script.
+- A cluster admission controller (e.g. Sigstore `policy-controller`) enforcing policy at schedule time. The policy is instead checked directly via `cosign verify-attestation --policy` in each demo script.
 
 ## Prerequisites
 

@@ -1,14 +1,8 @@
 """OS-layer demo: build a Kairos image, generate an SBOM (Syft), sign + attest
 (Cosign), push, verify (signature + CUE policy), tamper, and reject.
 
-Every step is an off-the-shelf tool - no custom code:
-    - podman/docker  -> OCI image build/push
-    - syft           -> CycloneDX SBOM generation
-    - cosign         -> signing, attestation, verification, CUE policy gate
-    - oras           -> OCI digest resolution
-
 Usage:
-    uv run python -m os_image.demo --registry localhost:5000
+    uv run python -m os_image.demo --registry localhost:5001
 """
 
 import json
@@ -55,9 +49,8 @@ def generate_sbom(image_ref: str, out_path: Path) -> int:
 
 
 @click.command()
-@click.option("--registry", default="localhost:5000", show_default=True)
-@click.option("--container-bin", default="podman", show_default=True,
-              help="Container CLI to use (podman or docker).")
+@click.option("--registry", default="localhost:5001", show_default=True)
+@click.option("--container-bin", default="podman", show_default=True)
 def demo(registry: str, container_bin: str) -> None:
     for tool in (container_bin, "cosign", "oras", "syft"):
         require_tool(tool)
@@ -69,26 +62,26 @@ def demo(registry: str, container_bin: str) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
 
-        console.rule("[bold cyan]1. Build the Kairos OS image")
+        console.rule("Build the Kairos OS image")
         container_build(container_bin, tag_ref, SCRIPT_DIR / "Containerfile")
 
-        console.rule("[bold cyan]2. Push it to the registry")
+        console.rule("Push it to the registry")
         container_push(container_bin, tag_ref)
         digest = oras_resolve(tag_ref)
         ref = f"{registry}/{repo}@{digest}"
         console.print(f"Pushed {ref}")
 
-        console.rule("[bold cyan]3. Generate an SBOM with Syft")
+        console.rule("Generate an SBOM with Syft")
         sbom_path = work / "sbom.cdx.json"
         component_count = generate_sbom(ref, sbom_path)
         console.print(f"Syft found {component_count} components")
 
-        console.rule("[bold cyan]4. Sign the image and attest the SBOM")
+        console.rule("Sign the image and attest the SBOM")
         key, pub = signing.generate_key_pair(work)
         signing.sign(ref, key=key)
         signing.attest(ref, predicate_path=sbom_path, predicate_type="cyclonedx", key=key)
 
-        console.rule("[bold cyan]5. Verify signature and CUE policy")
+        console.rule("Verify signature and CUE policy")
         verified = signing.verify(ref, key=pub) and signing.verify_attestation_policy(
             ref, key=pub, predicate_type="cyclonedx", policy_path=policy_path
         )
@@ -96,7 +89,7 @@ def demo(registry: str, container_bin: str) -> None:
         if not verified:
             raise click.ClickException("verification failed on a freshly signed image")
 
-        console.rule("[bold cyan]6. Tamper: rebuild FROM the signed image, push under the same tag")
+        console.rule("Tamper: rebuild FROM the signed image, push under the same tag")
         tamper_containerfile = work / "Containerfile.tamper"
         tamper_containerfile.write_text(
             f'FROM {tag_ref}\nRUN echo "attacker-was-here" > /etc/tamper-marker\n'
@@ -107,7 +100,7 @@ def demo(registry: str, container_bin: str) -> None:
         tampered_ref = f"{registry}/{repo}@{tampered_digest}"
         console.print(f"Tampered ref: {tampered_ref} (original: {ref})")
 
-        console.rule("[bold cyan]7. Verify the tampered image (expect rejection)")
+        console.rule("Verify the tampered image (expect rejection)")
         if signing.verify(tampered_ref, key=pub):
             raise click.ClickException("tampered image verified (unexpected!)")
         console.print("[green]REJECT: tampered image has no valid signature, as expected[/]")

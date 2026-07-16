@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Needed only for ai_model/demo.py's ONNX compile steps (optimum-onnx, onnxruntime.quantization).
+# Needed only for ai_model/demo.py's ONNX compile steps
 onnx-export = ["optimum-onnx>=0.1.0", "onnxruntime>=1.27.0"]
 
 [build-system]

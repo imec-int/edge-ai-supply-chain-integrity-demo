@@ -1,14 +1,9 @@
 """AI-model layer demo: a 3-stage compilation chain, each stage its own signed OCI
 artifact with its own AI-BOM chained back to the previous stage's BOM hash.
 
-  stage 0  source checkpoint   (real HF weights)        BOM: aibomgen-cli (3rd party)
+  stage 0  source checkpoint   (real HF weights)         BOM: aibomgen-cli
   stage 1  ONNX export         (optimum, HF -> ONNX)     BOM: ours, links to stage 0's BOM
   stage 2  quantized ONNX      (onnxruntime, INT8)       BOM: ours, links to stage 1's BOM
-
-Stage 2 stands in for device-specific compilation (ONNX -> TensorRT/Axelera Metis): a
-real, CPU-only INT8 quantization step that shrinks the model. Swap in a real device
-compiler at this stage if you have the hardware - the BOM/sign/attest/verify mechanism
-is identical.
 
 Each stage is pushed, signed, and attested as its own OCI artifact, forming a genuine
 hash-chain of provenance rather than a pile of unrelated documents on one node.
@@ -81,10 +76,8 @@ def generate_source_aibom(model_id: str, out_dir: Path) -> Path:
         "Install from https://github.com/idlab-discover/aibomgen-cli/releases",
     )
     out_dir.mkdir(parents=True, exist_ok=True)
-    # aibomgen-cli's `-o` takes a *file* path and only uses the directory portion, so a
-    # bare directory name without a trailing slash gets its last component stripped as
-    # if it were a filename - always pass it with a trailing slash.
     run("aibomgen-cli", "generate", "-m", model_id, "-o", f"{out_dir}/")
+
     matches = glob.glob(str(out_dir / "*.json"))
     if not matches:
         raise click.ClickException("aibomgen-cli did not produce an AI-BOM file")
@@ -98,6 +91,7 @@ def export_onnx(model_id: str, out_dir: Path) -> Path:
         "'pip install optimum-onnx onnxruntime'",
     )
     run("optimum-cli", "export", "onnx", "-m", model_id, str(out_dir))
+
     onnx_path = out_dir / "model.onnx"
     if not onnx_path.is_file():
         raise click.ClickException(f"optimum-cli did not produce {onnx_path}")
@@ -160,7 +154,7 @@ def verify_stage(stage: Stage, *, pub: Path) -> bool:
 @click.command()
 @click.option("--registry", default="localhost:5001", show_default=True)
 @click.option("--model-id", default="prajjwal1/bert-tiny", show_default=True,
-              help="Small Hugging Face model to fetch, BOM, and 'compile' through the chain.")
+              help="Hugging Face model to fetch, BOM, and 'compile' through the chain.")
 def demo(registry: str, model_id: str) -> None:
     if not signing.cosign_available():
         raise click.ClickException("cosign not found on PATH")
@@ -174,8 +168,7 @@ def demo(registry: str, model_id: str) -> None:
         work = Path(tmp)
         key, pub = signing.generate_key_pair(work)
 
-        # --- Stage 0: source checkpoint + aibomgen-cli's AI-BOM ---------------------
-        console.rule(f"[bold cyan]Stage 0: source checkpoint for {model_id} (aibomgen-cli)")
+        console.rule(f"Stage 0: source checkpoint for {model_id} (via aibomgen-cli)")
         source_aibom_path = generate_source_aibom(model_id, work / "aibomgen")
         console.print(Panel(
             JSON(source_aibom_path.read_text()),
@@ -194,8 +187,7 @@ def demo(registry: str, model_id: str) -> None:
         )
         console.print(f"Pushed {source_stage.ref}")
 
-        # --- Stage 1: HF checkpoint -> ONNX (optimum) -------------------------------
-        console.rule("[bold cyan]Stage 1: compile to ONNX (optimum) - our AI-BOM links to Stage 0")
+        console.rule("Stage 1: compile to ONNX (via onnx-optimum)")
         onnx_path = export_onnx(model_id, work / "onnx_out")
         console.print(f"ONNX: {onnx_path.name} ({onnx_path.stat().st_size} bytes)")
 
@@ -223,11 +215,7 @@ def demo(registry: str, model_id: str) -> None:
         )
         console.print(f"Pushed {onnx_stage.ref}")
 
-        # --- Stage 2: ONNX -> quantized ONNX (onnxruntime) --------------------------
-        console.rule(
-            "[bold cyan]Stage 2: quantize (onnxruntime, INT8, CPU-only) - "
-            "stands in for TensorRT/Metis, our AI-BOM links to Stage 1"
-        )
+        console.rule("Stage 2: quantize (via onnxruntime)")
         quant_path = quantize_onnx(onnx_path, work / "quantized" / "model.quant.onnx")
         console.print(
             f"Quantized: {quant_path.name} ({quant_path.stat().st_size} bytes, "
@@ -260,16 +248,14 @@ def demo(registry: str, model_id: str) -> None:
         )
         console.print(f"Pushed {quant_stage.ref}")
 
-        # --- Verify the whole chain --------------------------------------------------
-        console.rule("[bold cyan]Verify: signature + attestation policy at every stage (cosign + CUE)")
+        console.rule("Verify: signature + attestation policy (via cosign + CUE policies)")
         chain_ok = True
         for stage in (source_stage, onnx_stage, quant_stage):
             console.print(f"[bold]{stage.name}[/]")
             chain_ok &= verify_stage(stage, pub=pub)
         _print_verdict(chain_ok)
 
-        # --- Tamper the final (deployable) artifact and show rejection --------------
-        console.rule("[bold cyan]Tamper: push a modified quantized artifact to the same tag")
+        console.rule("Tamper: push a modified quantized artifact to the same tag")
         quant_path.write_bytes(quant_path.read_bytes() + b"\x00")
         tag_ref = f"{registry}/{repo}:quant-1.0.0"
         oras_push(tag_ref, quant_path, "application/vnd.onnx.model.quantized")
@@ -303,9 +289,9 @@ def _print_hash_check(recorded_hash: str, actual_path: Path) -> None:
 
 def _print_verdict(ok: bool, *, expect_reject: bool = False) -> None:
     if expect_reject:
-        console.print("[green]OK: tampered artifact rejected[/]" if not ok else "[red]ERROR: tampered artifact verified![/]")
+        console.print("[green]OK[/]: tampered artifact rejected" if not ok else "[red]ERROR[/]: tampered artifact verified")
     else:
-        console.print("[green]ALLOW: deploy[/]" if ok else "[red]ERROR: verification failed on a freshly signed artifact[/]")
+        console.print("[green]ALLOW[/]: verified, ready to deploy" if ok else "[red]ERROR[/]: verification failed on a freshly signed artifact")
 
 
 if __name__ == "__main__":

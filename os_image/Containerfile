@@ -1,14 +1,5 @@
-# Vendor-neutral Kairos bootable OS image, built with the real, unmodified
-# `kairos-init` tool. Runs only the lightweight `init` stage (branding/metadata) and
-# skips the `install` stage (apt-get + kernel + k0s provider) to keep the demo build
-# to a few seconds.
-#
-# For the full production-shaped build (kernel, grub, k0s, base packages), replace
-# the RUN line below with:
-#   /kairos-init -l debug --model ${MODEL} -s install --provider k0s \
-#     --provider-k0s-version v1.35.4+k0s.0 --version v"${HOST_IMAGE_VERSION}" && \
-#   /kairos-init -l debug --model ${MODEL} -s init --version v"${HOST_IMAGE_VERSION}"
-#
+# Basic Kairos bootable OS image, built with from `kairos-init`
+# Skips the `install` stage (apt-get + kernel + k0s provider) to keep the demo short by only running initialization
 # Reference: https://kairos.io/docs/reference/build/ and `kairos-init steps-info`.
 
 ARG OS=ubuntu

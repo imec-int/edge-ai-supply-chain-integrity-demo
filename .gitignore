@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+dist/
+*.egg-info/
+cosign.key
+cosign.pub
+*.cdx.json
+work/
+.ruff_cache/
+

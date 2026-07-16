@@ -1,9 +1,8 @@
-// GitOps-style policy gate for the OS-image layer, evaluated natively by
-// `cosign verify-attestation --policy` (CUE) against the Syft-generated SBOM.
+// Policy gate for the OS-image layer, evaluated by
+// `cosign verify-attestation --policy` against the Syft-generated SBOM.
 //
-// Kept minimal: asserts the attached document is a real CycloneDX SBOM describing a
-// container/OS image with at least one discovered component (i.e. Syft actually found
-// packages, rather than an empty/placeholder BOM being smuggled through).
+// Asserts the attached document is a CycloneDX SBOM describing a container
+// image with at least one discovered component.
 
 import "list"
 
@@ -14,5 +13,4 @@ predicate: {
 	metadata: component: type: "container"
 	components: list.MinItems(1)
 }
-
 

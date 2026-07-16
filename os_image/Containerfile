@@ -1,22 +1,10 @@
-# Vendor-neutral Kairos bootable OS image.
+# Vendor-neutral Kairos bootable OS image, built with the real, unmodified
+# `kairos-init` tool. Runs only the lightweight `init` stage (branding/metadata) and
+# skips the `install` stage (apt-get + kernel + k0s provider) to keep the demo build
+# to a few seconds.
 #
-# This uses the real, unmodified `kairos-init` tool (the same one the EdgeLab pipeline's
-# production base.Dockerfile uses) - not a stand-in. It deliberately runs only the
-# lightweight `init` stage (branding/metadata: writes a real /etc/kairos-release, etc.),
-# skipping the `install` stage's ~100-package apt-get + kernel install + k0s provider.
-#
-# Why: the full production build (kernel, grub, k0s, ~100 base packages) is what makes
-# a real Kairos image build take several minutes and is sensitive to the local apt
-# mirror/architecture - not reviewer-friendly for a "run this in one go" demo. Skipping
-# it keeps the build to a few seconds while still exercising the real Kairos tooling and
-# producing a genuinely Kairos-branded, signable/scannable OCI image. It also naturally
-# excludes any accelerator-vendor driver layer (NVIDIA JetPack, Axelera SDK, ...), which
-# are proprietary SDKs and out of scope for this demo - see the paper's §Related Work
-# for why Kairos itself was chosen (distribution-independent, full-image updates, CNCF
-# incubation).
-#
-# Want the full production-shaped build instead (~100 packages + kernel + k0s, several
-# minutes, needs full apt mirror access)? Replace the RUN line below with:
+# For the full production-shaped build (kernel, grub, k0s, base packages), replace
+# the RUN line below with:
 #   /kairos-init -l debug --model ${MODEL} -s install --provider k0s \
 #     --provider-k0s-version v1.35.4+k0s.0 --version v"${HOST_IMAGE_VERSION}" && \
 #   /kairos-init -l debug --model ${MODEL} -s init --version v"${HOST_IMAGE_VERSION}"
@@ -39,5 +27,3 @@ RUN --mount=type=bind,from=kairos-init,src=/kairos-init,dst=/kairos-init \
   /kairos-init -l info --model ${MODEL} -s init \
     --skip-step initrd,kubernetes,workarounds,buildProvider,providerBinaries,kernel \
     --version v"${HOST_IMAGE_VERSION}"
-
-

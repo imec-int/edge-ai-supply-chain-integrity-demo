@@ -1,45 +1,19 @@
-"""
-AI-model layer demo: fetch a real Hugging Face model, generate a source-model AI-BOM
-with the third-party `aibomgen-cli` tool, "compile" it (HF checkpoint -> ONNX, via
-`optimum`), build our own compiled-model AI-BOM that chains back to the source BOM,
-then sign -> attest (both BOMs) -> push -> verify -> tamper -> reject.
-
-This mirrors the paper's claim that a compiled artifact's integrity "can only be
-guaranteed through the attestation chain linking it back to the original auditable
-source model" - here that chain is: aibomgen-cli's source-model AI-BOM -> our
-compiled-model AI-BOM (which records the source BOM's hash) -> both cosign-attested
-on the same pushed artifact.
-
-Prerequisites (see ../README.md):
-    - cosign, oras on PATH
-    - aibomgen-cli on PATH (https://github.com/idlab-discover/aibomgen-cli)
-    - `uv sync --extra onnx-export` (installs optimum-onnx + onnxruntime for the
-      real ONNX export step)
-
-Usage:
-    uv run python -m ai_model.demo --registry localhost:5001 --model-id prajjwal1/bert-tiny
-"""
-
-"""
-AI-model layer demo: a 3-stage compilation chain, each stage its own signed OCI
+"""AI-model layer demo: a 3-stage compilation chain, each stage its own signed OCI
 artifact with its own AI-BOM chained back to the previous stage's BOM hash.
 
   stage 0  source checkpoint   (real HF weights)        BOM: aibomgen-cli (3rd party)
   stage 1  ONNX export         (optimum, HF -> ONNX)     BOM: ours, links to stage 0's BOM
   stage 2  quantized ONNX      (onnxruntime, INT8)       BOM: ours, links to stage 1's BOM
 
-Stage 2 stands in for the paper's device-specific compilation (ONNX -> TensorRT engine /
-Axelera Metis output): it's a real, meaningful, CPU-only transformation (dynamic INT8
-quantization measurably shrinks the model) that captures the same "quantization
-choices" AI-BOM concern the paper describes, without requiring a reviewer to own an
-NVIDIA GPU + JetPack or an Axelera accelerator + SDK. Swap in a real device compiler at
-this stage if you have the hardware - the BOM/sign/attest/verify mechanism is identical.
+Stage 2 stands in for device-specific compilation (ONNX -> TensorRT/Axelera Metis): a
+real, CPU-only INT8 quantization step that shrinks the model. Swap in a real device
+compiler at this stage if you have the hardware - the BOM/sign/attest/verify mechanism
+is identical.
 
-Every stage is pushed, signed, and attested as its own OCI artifact (not just extra
-attestations bolted onto one final digest) - this is what makes it a genuine hash-chain
-of provenance rather than a pile of unrelated documents on one node.
+Each stage is pushed, signed, and attested as its own OCI artifact, forming a genuine
+hash-chain of provenance rather than a pile of unrelated documents on one node.
 
-Prerequisites (see ../README.md):
+Prerequisites:
     - cosign, oras on PATH
     - aibomgen-cli on PATH (https://github.com/idlab-discover/aibomgen-cli)
     - `uv sync --extra onnx-export` (installs optimum-onnx + onnxruntime)
@@ -336,8 +310,4 @@ def _print_verdict(ok: bool, *, expect_reject: bool = False) -> None:
 
 if __name__ == "__main__":
     demo()
-
-
-
-
 

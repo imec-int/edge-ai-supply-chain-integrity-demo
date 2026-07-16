@@ -1,8 +1,4 @@
-"""
-Thin ``cosign`` wrappers. Every actual cryptographic operation (signing, attestation,
-verification, transparency-log interaction) is delegated to the `cosign` CLI -
-this module just shells out to it so the demo scripts read cleanly.
-"""
+"""Thin ``cosign`` CLI wrappers used by both the AI-model and OS-image demos."""
 
 import os
 import shutil
@@ -79,7 +75,7 @@ def verify_attestation_policy(
     image_ref: str, *, key: Path, predicate_type: str, policy_path: Path,
     allow_http: bool = True,
 ) -> bool:
-    """Verify the attestation AND evaluate it against a CUE policy - both native cosign features."""
+    """Verify the attestation and evaluate it against a CUE policy."""
     args = [
         "verify-attestation",
         "--key",

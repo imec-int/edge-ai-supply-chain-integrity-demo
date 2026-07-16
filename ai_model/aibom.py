@@ -1,15 +1,4 @@
-"""
-Build a CycloneDX 1.6 AI Bill of Materials (AI-BOM) for a compiled model artifact.
-
-This is the one piece of this repo that isn't just "call an existing CLI": there is no
-off-the-shelf scanner that can look at a compiled `.engine`/`.axelera` file and tell you
-which ONNX model it came from, which compiler produced it, or with what parameters. So we
-build that document ourselves, using the CycloneDX object model from `cyclonedx-python-lib`
-(not hand-rolled JSON) for spec compliance.
-
-Everything downstream of this file (signing, attesting, verifying, policy enforcement) is
-just the `cosign` CLI - see `signing.py` and `policy.cue`.
-"""
+"""Build a CycloneDX 1.6 AI Bill of Materials (AI-BOM) for a compiled model artifact."""
 
 import datetime
 import hashlib
@@ -83,12 +72,11 @@ def build_aibom(
     registry_ref: str | None = None,
     source_aibom: Artifact | None = None,
 ) -> dict[str, Any]:
-    """Build a CycloneDX 1.6 AI-BOM document (as a plain ``dict``).
+    """Build a CycloneDX 1.6 AI-BOM document as a plain ``dict``.
 
-    ``source_aibom``, when given, is the (aibomgen-cli-generated) AI-BOM for the
-    *original* Hugging Face model this artifact was compiled from. Recording its hash
-    here is what lets a verifier walk the chain back from "compiled artifact" to
-    "audited source model" instead of trusting the compiled artifact in isolation.
+    ``source_aibom``, when given, is the AI-BOM for the source model this artifact was
+    compiled from. Recording its hash lets a verifier walk the chain back from the
+    compiled artifact to the audited source model.
     """
     model_ref = f"{model_name}@{model_version}"
 
@@ -166,5 +154,3 @@ def write_aibom(bom: dict[str, Any], path: str | Path) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(bom, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return out
-
-

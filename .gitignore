@@ -8,4 +8,6 @@ cosign.pub
 *.cdx.json
 work/
 .ruff_cache/
-
+*.iml
+.idea/
+aibomgen-cli.tar.gz

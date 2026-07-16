@@ -1,160 +1,285 @@
-# supply-chain-integrity-demo
 
-Runnable, locally-reproducible reference implementation of a layered supply-chain
-integrity pipeline for edge AI: a **Kairos OS image** and a **compiled AI model**, each
-signed, attested, and verified with real, off-the-shelf tooling - no accelerator
-hardware, cloud account, or proprietary SDK required.
+# AIBoMGen CLI
 
-This is a companion artifact to a research paper on full-stack supply-chain integrity
-for edge AI (OS -> container -> AI model, signed and attested at every layer). It
-deliberately does **not** include the full production pipeline (vendor accelerator
-drivers, internal CI/registry, cluster topology) - only the generic, reusable
-mechanism, so it can be reviewed and run independently.
+[![Build + Unit Tests](https://github.com/idlab-discover/aibomgen-cli/actions/workflows/build.yml/badge.svg)](https://github.com/idlab-discover/aibomgen-cli/actions/workflows/build.yml) [![Scan Integration](https://github.com/idlab-discover/aibomgen-cli/actions/workflows/integration.yml/badge.svg)](https://github.com/idlab-discover/aibomgen-cli/actions/workflows/integration.yml)
 
-## What this demonstrates
+Go CLI tool and packages that scan a repository for **Hugging Face model and dataset usage** and emit a **CycloneDX AI Bill of Materials (AIBOM)**.
 
-| Paper layer | This repo | Tooling (all off-the-shelf) |
-|---|---|---|
-| OS image | `os_image/` - a real, vendor-neutral Kairos image | `kairos-init`, `podman`/`docker`, `syft`, `cosign` |
-| AI model | `ai_model/` - a real small Hugging Face model, compiled through a 3-stage chain | `aibomgen-cli`, `optimum`, `onnxruntime`, `cosign` |
-| Attestation & verification | both layers | `cosign attest`/`verify-attestation --policy` (CUE) |
+## Status
 
-The AI-model layer is a genuine multi-stage provenance chain, not a single artifact:
+What works today:
 
-```
-stage 0: source checkpoint (real HF weights)     BOM: aibomgen-cli (3rd party, HF metadata)
-    │                                              │
-    ▼ optimum (HF -> ONNX)                         ▼ links back via BOM hash
-stage 1: ONNX export                             BOM: ours (cyclonedx-python-lib)
-    │                                              │
-    ▼ onnxruntime.quantization (INT8, CPU-only)    ▼ links back via BOM hash
-stage 2: quantized ONNX ("deployable" artifact)  BOM: ours (cyclonedx-python-lib)
-```
+- `scan` command: walk a directory, detect AI imports across multiple file types, and emit one AIBOM per detected model
+- `generate` command: generate an AIBOM directly from one or more Hugging Face model IDs, or interactively browse models
+- `validate` command: validate an existing AIBOM with completeness scoring and strict mode
+- `completeness` command: score an existing AIBOM against the metadata field registry
+- `enrich` command: fill missing metadata fields interactively or from a YAML config file
+- `merge` command: merge one or more AIBOMs with an SBOM from another tool (Syft, Trivy, etc.)
+- `vuln-scan` command: fetch per-file security scan results from the Hugging Face Hub for every model and dataset component in an AIBOM; optionally inject findings as CycloneDX vulnerabilities
+- Hugging Face Hub API and README/model-card fetch to populate metadata fields
+- Dataset metadata fetch (API + README) with dataset components linked in the AIBOM
+- Security scan data from the HF tree API embedded as BOM properties and `BOM.Vulnerabilities` during generation; disable with `--no-security-scan`
+- Multi-source detection: Python (transformers, diffusers, huggingface_hub, sentence-transformers, optimum, peft, LangChain, evaluate, and more), YAML configs, JSON configs, Markdown front-matter, shell scripts, Dockerfiles, and JavaScript/TypeScript
+- Rich TUI output built with Charm libraries (Lipgloss, Bubbletea, Huh)
+- Interactive Hugging Face model browsing and selection
 
-Each stage is pushed, signed, and attested as **its own OCI artifact** - not just extra
-attestations bolted onto one final digest - so the chain is a real hash-chain of
-provenance rather than a pile of unrelated documents on one node. See
-[Design notes](#design-notes) for why stage 2 uses quantization rather than requiring a
-reviewer to own NVIDIA JetPack/TensorRT or an Axelera accelerator.
+What is future work:
 
-Every step below is a call to an existing, maintained tool - see [Design notes](#design-notes)
-for why nothing here reinvents SBOM scanning, OCI registry clients, or policy evaluation.
+- AIBOM generation from local model weight files (not hosted on Hugging Face)
 
-## Prerequisites
+## Installation
 
-- [`podman`](https://podman.io/) or `docker` (image build/push)
-- [`cosign`](https://docs.sigstore.dev/system_config/installation/) (signing, attestation, CUE policy verification)
-- [`oras`](https://oras.land/docs/installation) (generic OCI artifact push/resolve)
-- [`syft`](https://github.com/anchore/syft) (real CycloneDX SBOM generation for the OS image)
-- [`aibomgen-cli`](https://github.com/idlab-discover/aibomgen-cli/releases) (AI-BOM generation for the source Hugging Face model)
-- [`uv`](https://docs.astral.sh/uv/) (Python env/dependency management)
+### Using `go install`
 
-macOS:
+Requires Go:
 
 ```bash
-brew install podman cosign oras-project/tap/oras syft
-# aibomgen-cli: download the release for your platform and put it on PATH, e.g.
-curl -L -o aibomgen-cli.tar.gz \
-  https://github.com/idlab-discover/aibomgen-cli/releases/download/v0.2.1/aibomgen-cli_0.2.1_darwin_arm64.tar.gz
-tar -xzf aibomgen-cli.tar.gz && chmod +x aibomgen-cli && sudo mv aibomgen-cli /usr/local/bin/
+go install github.com/idlab-discover/aibomgen-cli@latest
 ```
 
-> **Port note:** the local test registry uses port 5001, not 5000 - on macOS, port 5000
-> is claimed by the AirPlay Receiver by default.
-
-## Quick start
+Ensure `$HOME/go/bin` is in your `PATH`, then verify:
 
 ```bash
-podman run -d --name demo-registry -p 5001:5000 registry:2
-
-uv sync --extra onnx-export   # installs optimum-onnx + onnxruntime for the AI-model demo
-
-./os_image/demo.sh localhost:5001
-uv run python -m ai_model.demo --registry localhost:5001 --model-id prajjwal1/bert-tiny
+aibomgen-cli --help
 ```
 
-Each demo prints the generated BOM(s), pushes the artifact(s), signs + attests them,
-verifies signature and policy at every stage (ALLOW), then tampers with the final
-pushed artifact and shows verification failing (REJECT) - the same build -> sign ->
-verify -> tamper -> reject loop described in the paper's demonstration section,
-runnable end-to-end in well under a minute on a laptop (once dependencies are
-installed - the AI-model chain above took ~50s total on a base MacBook, including
-downloading real Hugging Face weights).
+**Uninstall:**
 
-## Layout
-
-```
-os_image/
-  Containerfile   # real kairos-init build (init stage only - see file header for why)
-  policy.cue      # CUE policy evaluated by `cosign verify-attestation --policy`
-  demo.sh         # build -> syft SBOM -> sign -> attest -> verify -> tamper -> reject
-ai_model/
-  aibom.py            # CycloneDX AI-BOM builder, generic across compilation stages
-                       # (the one piece of custom code - see Design notes)
-  signing.py          # thin cosign CLI wrapper
-  policy.cue          # policy for our own BOMs (ONNX + quantized stages): requires a
-                       # "Source Model AI-BOM SHA-256" link back to the previous stage
-  source_policy.cue   # policy for aibomgen-cli's source-model AI-BOM: requires its
-                       # embedded Hugging Face security scan to say "safe"
-  demo.py             # the full 3-stage chain: aibomgen-cli -> optimum -> onnxruntime
-                       # -> sign/attest every stage -> verify chain -> tamper -> reject
+```bash
+rm "$(go env GOPATH)/bin/aibomgen-cli"
+hash -r  # refresh shell command cache
 ```
 
-## Design notes
+### From release archive (preferred)
 
-- **OS image**: uses the real `kairos-init` tool (the same one production Kairos builds
-  use), but only its lightweight `init` stage - not the ~100-package `install` stage,
-  kernel, grub, or k0s provider. That's what makes production Kairos builds take
-  several minutes and sensitive to the local apt mirror; skipping it keeps this demo to
-  a few seconds while still producing a genuinely Kairos-branded, signable, scannable
-  OCI image. See the comment block in `os_image/Containerfile` for how to opt into the
-  full production-shaped build instead.
-- **SBOM generation**: real `syft` output, not a hand-rolled scanner - the OS-image BOM
-  reflects the packages actually in the image.
-- **AI-BOM for the source model**: generated by
-  [`aibomgen-cli`](https://github.com/idlab-discover/aibomgen-cli) (the tool behind
-  Vandendriessche et al.'s automated, signed AI-BOM work cited in the paper's related
-  work), which queries the Hugging Face Hub for license, model card, and security-scan
-  metadata - not reimplemented here.
-- **AI-BOM for the compiled stages** (`ai_model/aibom.py`): this is the one piece of
-  genuinely custom code in this repo. There is no off-the-shelf tool that inspects a
-  compiled model artifact and tells you which input it came from, which compiler
-  produced it, or with what parameters - that provenance has to be recorded at compile
-  time. It's built with the `cyclonedx-python-lib` object model (not hand-rolled JSON),
-  and each stage's BOM records the *previous* stage's BOM hash, chaining the final
-  artifact all the way back to the audited source model.
-- **Why quantization instead of TensorRT/Axelera Metis**: the paper's production
-  pipeline compiles ONNX to a device-specific engine (TensorRT for NVIDIA GPUs, Metis
-  compiler output for Axelera NPUs). Neither is something a reviewer can be expected to
-  set up - TensorRT needs an NVIDIA GPU + CUDA + JetPack, Metis needs an Axelera
-  accelerator + proprietary SDK. `onnxruntime.quantization`'s dynamic INT8 quantization
-  is a real, meaningful, CPU-only stand-in for that step: it measurably shrinks the
-  model (bert-tiny's ONNX export goes from ~17.5MB to ~4.5MB) and captures exactly the
-  "quantization choices" concern the paper's AI-BOM section calls out - without any
-  special hardware. Swap in a real device compiler at this stage if you have the
-  hardware; the BOM/sign/attest/verify mechanism is identical either way.
-- **Compilation steps are real**: `optimum-cli export onnx` (HF checkpoint -> ONNX) and
-  `onnxruntime.quantization.quantize_dynamic` (ONNX -> INT8) are actual conversions, not
-  stand-ins with random bytes. Swap `--model-id` for any Hugging Face model to see the
-  same chain with a different source.
-- **Policy gate**: `cosign verify-attestation --policy <file>.cue` evaluates each
-  attestation with a real CUE policy - this stands in for the paper's GitOps
-  admission-time verification step, without needing a live Flux/Kubernetes cluster. The
-  two policies check different, meaningful things (see `ai_model/*.cue` above), not
-  just document shape. `cosign attest` also already wraps every predicate in a genuine
-  `https://in-toto.io/Statement/v0.1` envelope by default.
+```bash
+VERSION=0.2.0                      # replace with the desired version (without leading 'v')
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')  # linux, darwin
+ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')  # amd64, arm64
+curl -L -o aibomgen-cli_${VERSION}_${OS}_${ARCH}.tar.gz \
+  https://github.com/idlab-discover/aibomgen-cli/releases/download/v${VERSION}/aibomgen-cli_${VERSION}_${OS}_${ARCH}.tar.gz
+tar -xzf aibomgen-cli_${VERSION}_${OS}_${ARCH}.tar.gz
+chmod +x aibomgen-cli
+sudo mv aibomgen-cli /usr/local/bin/aibomgen-cli
+hash -r  # refresh shell command cache without opening a new terminal
+```
 
-## What this is *not*
+**Uninstall:**
 
-- Not the full production pipeline: no accelerator vendor drivers (NVIDIA JetPack,
-  Axelera SDK), no internal CI/registry, no cluster topology, no SLSA provenance
-  predicate generation.
-- Not a benchmark of model quality or inference performance - the compilation chain
-  exists purely to produce derived artifacts whose provenance can be recorded and
-  verified, not to optimize for accuracy or latency.
+```bash
+sudo rm /usr/local/bin/aibomgen-cli
+rm -f ~/.local/share/bash-completion/completions/aibomgen-cli
+hash -r  # refresh shell command cache
+```
 
-## License
+### From source
 
-Apache-2.0, see [LICENSE](LICENSE).
+```bash
+go test ./...
+go build -o aibomgen-cli .
+aibomgen-cli --help
+```
+
+**Uninstall:**
+
+```bash
+rm ./aibomgen-cli
+```
+
+## Commands
+
+### `scan`
+
+Walks a directory for AI-related imports across Python, YAML, JSON, Markdown, shell, Dockerfile, and JavaScript/TypeScript files. Writes one AIBOM per detected model. Security scan data from the Hugging Face tree API is embedded in each BOM by default.
+
+```bash
+aibomgen-cli scan -i targets/target-2
+aibomgen-cli scan -i targets/target-3 --format xml --hf-mode online
+aibomgen-cli scan -i targets/target-1 --no-security-scan
+```
+
+By default this writes JSON files under `dist/` with filenames derived from the model ID, e.g.:
+
+- `dist/google-bert_bert-base-uncased_aibom.json`
+- `dist/templates_model-card-example_aibom.json`
+
+Options:
+
+- `--input, -i <path>`: directory to scan (default: current directory; cannot be used with `--hf-mode=dummy`)
+- `--output, -o <path>`: output file path (directory portion is used)
+- `--format, -f json|xml|auto` (default: `auto`)
+- `--spec <version>`: CycloneDX spec version for output (e.g., `1.4`, `1.5`, `1.6`)
+- `--hf-mode online|dummy` (default: `online`)
+- `--hf-token <token>`: for gated/private models
+- `--hf-timeout <seconds>`
+- `--no-security-scan`: skip fetching the Hugging Face security scan tree
+- `--log-level quiet|standard|debug`
+
+### `generate`
+
+Generates an AIBOM from one or more Hugging Face model IDs specified directly, or through an interactive model browser. Security scan data is embedded in the BOM by default. Use `scan` instead when you want to detect models from a source directory.
+
+```bash
+aibomgen-cli generate -m google-bert/bert-base-uncased
+aibomgen-cli generate -m gpt2 -m meta-llama/Llama-3.1-8B
+aibomgen-cli generate --interactive
+```
+
+Options:
+
+- `--model-id, -m <id>`: Hugging Face model ID (can be specified multiple times or comma-separated)
+- `--interactive`: open an interactive model selector (cannot be used with `--model-id`)
+- `--output, -o <path>`: output file path (directory portion is used)
+- `--format, -f json|xml|auto` (default: `auto`)
+- `--spec <version>`: CycloneDX spec version for output (e.g., `1.4`, `1.5`, `1.6`)
+- `--hf-mode online|dummy` (default: `online`)
+- `--hf-token <token>`: for gated/private models
+- `--hf-timeout <seconds>`
+- `--no-security-scan`: skip fetching the Hugging Face security scan tree
+- `--log-level quiet|standard|debug`
+
+### `validate`
+
+Validates an existing AIBOM file (JSON/XML), runs completeness checks, and can fail in strict mode.
+
+```bash
+aibomgen-cli validate -i dist/google-bert_bert-base-uncased_aibom.json
+aibomgen-cli validate -i dist/google-bert_bert-base-uncased_aibom.json --strict --min-score 0.5
+```
+
+Options:
+
+- `--input, -i <path>`: path to AIBOM file (required)
+- `--format, -f json|xml|auto`
+- `--strict`: fail on missing required fields
+- `--min-score 0.0-1.0`: minimum acceptable completeness score
+- `--check-model-card`: validate model card fields (default: `false`)
+- `--log-level quiet|standard|debug`
+
+### `completeness`
+
+Computes and prints a completeness score for an existing AIBOM using the metadata field registry. Scores both the model component and any linked dataset components.
+
+```bash
+aibomgen-cli completeness -i dist/google-bert_bert-base-uncased_aibom.json
+```
+
+Options:
+
+- `--input, -i <path>`: path to AIBOM file (required)
+- `--format, -f json|xml|auto`
+- `--plain-summary`: print a single-line machine-readable summary (no styling)
+- `--log-level quiet|standard|debug`
+
+### `enrich`
+
+Enriches an existing AIBOM by filling missing metadata fields interactively or from a YAML configuration file. Can optionally refetch the latest metadata from Hugging Face before prompting.
+
+```bash
+aibomgen-cli enrich -i dist/google-bert_bert-base-uncased_aibom.json
+aibomgen-cli enrich -i dist/google-bert_bert-base-uncased_aibom.json --strategy interactive
+aibomgen-cli enrich -i dist/google-bert_bert-base-uncased_aibom.json --strategy file --file config/enrichment.yaml
+```
+
+Options:
+
+- `--input, -i <path>`: path to existing AIBOM (required)
+- `--output, -o <path>`: output file path (default: overwrite input)
+- `--format, -f json|xml|auto`: input BOM format
+- `--output-format json|xml|auto`: output BOM format (default: same as input)
+- `--spec <version>`: CycloneDX spec version for output
+- `--strategy interactive|file` (default: `interactive`)
+- `--file <path>`: enrichment config file for file-based enrichment (default: `./config/enrichment.yaml`)
+- `--required-only`: only enrich required fields
+- `--min-weight <float>`: minimum weight threshold for fields to enrich
+- `--refetch`: refetch model metadata from Hugging Face Hub before enrichment
+- `--no-preview`: skip preview before saving
+- `--hf-token <token>`: Hugging Face API token (for refetch)
+- `--hf-base-url <url>`: Hugging Face base URL (for refetch)
+- `--hf-timeout <seconds>`: Hugging Face API timeout (for refetch)
+- `--log-level quiet|standard|debug`
+
+### `vuln-scan`
+
+Fetches per-file security scan results from the Hugging Face Hub for every model and dataset component referenced in an existing AIBOM and displays a vulnerability report. The scanners covered are Cisco Foundation AI (ClamAV), ProtectAI, HuggingFace Pickle Scanner, VirusTotal, and JFrog Research.
+
+Optionally re-injects the findings back into the AIBOM as CycloneDX `BOM.Vulnerabilities` using `--enrich`.
+
+```bash
+aibomgen-cli vuln-scan -i dist/google-bert_bert-base-uncased_aibom.json
+aibomgen-cli vuln-scan -i dist/google-bert_bert-base-uncased_aibom.json --enrich
+aibomgen-cli vuln-scan -i dist/google-bert_bert-base-uncased_aibom.json --enrich --no-preview
+```
+
+Options:
+
+- `--input, -i <path>`: path to existing AIBOM (required)
+- `--output, -o <path>`: output path when `--enrich` is set (default: overwrite input)
+- `--format, -f json|xml|auto`: input BOM format
+- `--output-format json|xml|auto`: output BOM format
+- `--spec <version>`: CycloneDX spec version for output
+- `--enrich`: inject discovered vulnerabilities back into the AIBOM
+- `--interactive`: show confirmation prompt before saving (default: `true`, only relevant with `--enrich`)
+- `--no-preview`: skip the confirmation prompt (only with `--enrich`)
+- `--hf-token <token>`: Hugging Face API token
+- `--hf-base-url <url>`: Hugging Face base URL override
+- `--hf-timeout <seconds>` (default: `15`)
+- `--log-level quiet|standard|debug`
+
+### `merge`
+
+**[BETA]** Merges one or more AIBOMs with an existing SBOM from a different source (e.g., Syft, Trivy) into a single comprehensive BOM.
+
+The SBOM's application metadata is preserved as the main component, while AI/ML model and dataset components from the AIBOM(s) are added to the components list.
+
+```bash
+# 1. Generate SBOM for software dependencies using Syft
+syft scan . -o cyclonedx-json > sbom.json
+
+# 2. Generate AIBOM for AI/ML components using AIBoMGen
+aibomgen-cli scan -i . -o aibom.json
+
+# 3. Merge them into a comprehensive BOM
+aibomgen-cli merge --aibom aibom.json --sbom sbom.json -o merged.json
+
+# 4. Merge multiple AIBOMs with one SBOM (for projects using multiple models in separate AIBOM files)
+aibomgen-cli merge --aibom model1_aibom.json --aibom model2_aibom.json --sbom sbom.json -o merged.json
+```
+
+Options:
+
+- `--aibom <path>`: path to AIBOM file (can be specified multiple times, required)
+- `--sbom <path>`: path to SBOM file (required)
+- `--output, -o <path>`: output path for merged BOM (required)
+- `--format, -f json|xml|auto`: output format (default: `auto`)
+- `--deduplicate`: remove duplicate components based on BOM-ref (default: `true`)
+- `--log-level quiet|standard|debug`
+
+### Global flags
+
+- `--config <path>`: config file to use (default: `$HOME/.aibomgen-cli.yaml` or `./config/defaults.yaml`)
+
+The config file is a YAML file that sets default values for any command flag, so you don't have to repeat them on the command line. Keys are namespaced by command:
+
+```yaml
+scan:
+  hf-token: "hf_..."
+  hf-mode: "online"
+  log-level: "debug"
+
+validate:
+  strict: true
+  min-score: 0.5
+```
+
+Any flag not passed on the CLI falls back to the config file value. CLI flags always take precedence. See [`config/defaults.yaml`](config/defaults.yaml) for a full reference of all available keys.
+
+
+## Docs and examples
+
+- API reference: [pkg.go.dev/github.com/idlab-discover/aibomgen-cli](https://pkg.go.dev/github.com/idlab-discover/aibomgen-cli)
+- `targets/` — small repositories used in integration tests and examples
+- `docs/` — design notes and field mapping documentation (drafts)
+- [`config/defaults.yaml`](config/defaults.yaml) — full reference of all config file keys
 
 

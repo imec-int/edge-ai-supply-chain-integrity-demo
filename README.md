@@ -4,9 +4,9 @@ Runnable companion code for the CCS 2026 demo paper *"DEMO: Full-Stack Supply-Ch
 
 The paper proposes a pipeline that signs and attests Bills of Materials at every layer of an edge AI stack (OS, container, AI model), then verifies and rejects tampered artifacts before deployment. This repo implements a local, hardware-free subset of that pipeline for two of its layers, using the same real, off-the-shelf tools (Kairos, Syft, Cosign, CycloneDX, aibomgen-cli) the paper describes.
 
-## What the demo shows
+## Contents
 
-| Claim                                                                                                                                      | Demonstrated by                                                                                                                                                                                                                  |
+| Paper claim                                                                                                                                | Demonstrated by                                                                                                                                                                                                                  |
 |--------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **OS Layer:** OS built as a signed OCI image with an SBOM                                                                                  | `os_image/demo.py` builds a real Kairos image (`kairos-init`), pushes it, and generates a CycloneDX SBOM with Syft                                                                                                               |
 | **AI Model Layer:** AI-BOM records model provenance, compiler/quantization parameters, and a reference back to the source model            | `ai_model/demo.py` builds a 3-stage chain (source checkpoint → ONNX → quantized ONNX), where each compiled stage's AI-BOM records the previous stage's AI-BOM hash                                                               |

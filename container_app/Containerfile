@@ -1,0 +1,18 @@
+# Sample application container for the "Container & Application Layer" demo.
+#
+# The model/ directory is populated by container_app/demo.py *before* this
+# image is built, with a model artifact that already passed the full
+# ai_model provenance chain.
+# The app itself only ever serves whatever was verified and baked in here.
+
+FROM python:3.12-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY app.py .
+COPY model/ ./model/
+
+EXPOSE 8080
+ENV MODEL_PATH=/app/model/model.onnx
+CMD ["python", "app.py"]

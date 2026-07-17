@@ -21,7 +21,13 @@ SCRIPT_DIR = Path(__file__).parent
 
 
 def run(*args: str, cwd: Path | None = None) -> str:
-    result = subprocess.run(args, cwd=cwd, check=True, capture_output=True, text=True)
+    try:
+        result = subprocess.run(args, cwd=cwd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip()
+        raise click.ClickException(
+            f"`{' '.join(args)}` failed (exit {exc.returncode}){': ' + detail if detail else ''}"
+        ) from exc
     return result.stdout.strip()
 
 
@@ -49,7 +55,7 @@ def generate_sbom(image_ref: str, out_path: Path) -> int:
 
 
 @click.command()
-@click.option("--registry", default="localhost:5001", show_default=True)
+@click.option("--registry", default="localhost:5000", show_default=True)
 @click.option("--container-bin", default="podman", show_default=True)
 def demo(registry: str, container_bin: str) -> None:
     for tool in (container_bin, "cosign", "oras", "syft"):

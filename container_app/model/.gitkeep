@@ -1,0 +1,4 @@
+Populated by `container_app/demo.py` with a verified quantized model artifact
+(model.onnx) before the application image is built. Left empty in version
+control on purpose - see README.md.
+

@@ -11,3 +11,4 @@ work/
 *.iml
 .idea/
 aibomgen-cli.tar.gz
+container_app/model/model.onnx

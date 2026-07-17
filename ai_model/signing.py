@@ -30,6 +30,7 @@ def _run(args: list[str]) -> str:
 
 def generate_key_pair(work_dir: Path) -> tuple[Path, Path]:
     """Generate a throwaway, passwordless demo keypair in ``work_dir``."""
+    work_dir.mkdir(parents=True, exist_ok=True)
     _run(["generate-key-pair", "--output-key-prefix", str(work_dir / "cosign")])
     return work_dir / "cosign.key", work_dir / "cosign.pub"
 

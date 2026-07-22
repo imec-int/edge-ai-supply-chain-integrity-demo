@@ -71,12 +71,17 @@ def build_aibom(
     provenance: CompileProvenance,
     registry_ref: str | None = None,
     source_aibom: Artifact | None = None,
+    component_type: ComponentType = ComponentType.MACHINE_LEARNING_MODEL,
 ) -> dict[str, Any]:
     """Build a CycloneDX 1.6 AI-BOM document as a plain ``dict``.
 
     ``source_aibom``, when given, is the AI-BOM for the source model this artifact was
     compiled from. Recording its hash lets a verifier walk the chain back from the
     compiled artifact to the audited source model.
+
+    ``component_type`` defaults to a machine-learning-model subject, but callers can
+    override it (e.g. ``ComponentType.DATA``) for non-model artifacts, such as a
+    tokenizer, that still need the same hash/provenance-chaining treatment.
     """
     model_ref = f"{model_name}@{model_version}"
 
@@ -95,7 +100,7 @@ def build_aibom(
         properties["Source Model AI-BOM SHA-256"] = source_aibom.sha256
 
     subject = Component(
-        type=ComponentType.MACHINE_LEARNING_MODEL,
+        type=component_type,
         bom_ref=model_ref,
         name=model_name,
         version=model_version,

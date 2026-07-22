@@ -13,7 +13,8 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 
 MODEL_PATH = Path(os.environ.get("MODEL_PATH", "/app/model/model.onnx"))
-MODEL_ID = os.environ.get("MODEL_ID", "prajjwal1/bert-tiny")
+TOKENIZER_PATH = Path(os.environ.get("TOKENIZER_PATH", "/app/model/tokenizer"))
+MODEL_ID = os.environ.get("MODEL_ID", "prajjwal1/bert-tiny")  # metadata only, see _load()
 
 _session: Any = None
 _tokenizer: Any = None
@@ -25,6 +26,11 @@ def _load() -> None:
     Load the baked-in ONNX model + tokenizer once, before the server starts
     accepting requests.
 
+    Both are verified, signed, and attested artifacts baked into this image at
+    build time (see container_app/demo.py and ai_model/demo.py's tokenizer
+    stage) - nothing is fetched from the network at runtime, so MODEL_ID above
+    is informational only.
+
     Only basic text encoder models are supported.
     """
     global _session, _tokenizer, _load_error
@@ -33,17 +39,22 @@ def _load() -> None:
     try:
         if not MODEL_PATH.is_file():
             raise RuntimeError(f"no verified model found at {MODEL_PATH}")
+        if not TOKENIZER_PATH.is_dir():
+            raise RuntimeError(f"no verified tokenizer found at {TOKENIZER_PATH}")
         import onnxruntime as ort
         from transformers import AutoTokenizer
 
         session = ort.InferenceSession(str(MODEL_PATH), providers=["CPUExecutionProvider"])
-        tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+        tokenizer = AutoTokenizer.from_pretrained(str(TOKENIZER_PATH))
         _session, _tokenizer = session, tokenizer
-        print(f"[app] model + tokenizer loaded OK from {MODEL_PATH} ({MODEL_ID})", flush=True)
+        print(
+            f"[app] model + tokenizer loaded OK from {MODEL_PATH} / {TOKENIZER_PATH}", flush=True
+        )
     except Exception as exc:  # noqa: BLE001 - surfaced via /healthz and /predict
         _load_error = f"{exc}\n{traceback.format_exc()}"
         print(
-            f"[app] FAILED to load model/tokenizer for {MODEL_ID}: {exc}"
+            f"[app] FAILED to load model/tokenizer ({MODEL_ID}) from "
+            f"{MODEL_PATH} / {TOKENIZER_PATH}: {exc}"
             f"\n(only simple text encoder models are supported)\n",
             file=sys.stderr, flush=True,
         )
@@ -58,8 +69,14 @@ def handle_uncaught(exc: Exception):
 def healthz():
     _load()
     if _load_error is not None:
-        return jsonify(status="degraded", model_path=str(MODEL_PATH), error=_load_error), 503
-    return jsonify(status="ok", model_path=str(MODEL_PATH), model_id=MODEL_ID)
+        return jsonify(
+            status="degraded", model_path=str(MODEL_PATH),
+            tokenizer_path=str(TOKENIZER_PATH), error=_load_error,
+        ), 503
+    return jsonify(
+        status="ok", model_path=str(MODEL_PATH),
+        tokenizer_path=str(TOKENIZER_PATH), model_id=MODEL_ID,
+    )
 
 
 @app.post("/predict")

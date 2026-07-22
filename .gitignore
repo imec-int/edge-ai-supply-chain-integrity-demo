@@ -12,3 +12,4 @@ work/
 .idea/
 aibomgen-cli.tar.gz
 container_app/model/model.onnx
+container_app/model/tokenizer

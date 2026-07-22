@@ -1,9 +1,11 @@
-"""AI-model layer demo: a 3-stage compilation chain, each stage its own signed OCI
-artifact with its own AI-BOM chained back to the previous stage's BOM hash.
+"""
+AI-model layer demo: a 4-stage chain, each stage its own signed OCI
+artifact with its own AI-BOM chained back to the source stage's BOM hash.
 
-  stage 0  source checkpoint   (real HF weights)         BOM: aibomgen-cli
-  stage 1  ONNX export         (optimum, HF -> ONNX)     BOM: ours, links to stage 0's BOM
-  stage 2  quantized ONNX      (onnxruntime, INT8)       BOM: ours, links to stage 1's BOM
+  stage 0a  source checkpoint   (real HF weights)         BOM: aibomgen-cli
+  stage 0b tokenizer           (vocab/config, same repo)  BOM: ours, links to stage 0a's BOM
+  stage 1  ONNX export         (optimum, HF -> ONNX)      BOM: ours, links to stage 0b's BOM
+  stage 2  quantized ONNX      (onnxruntime, INT8)        BOM: ours, links to stage 1's BOM
 
 Each stage is pushed, signed, and attested as its own OCI artifact, forming a genuine
 hash-chain of provenance rather than a pile of unrelated documents on one node.
@@ -18,13 +20,17 @@ Usage:
 """
 
 import glob
+import io
+import json
 import shutil
 import subprocess
+import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 import click
+from cyclonedx.model.component import ComponentType
 from huggingface_hub import HfApi, hf_hub_download
 from rich.console import Console
 from rich.json import JSON
@@ -35,6 +41,21 @@ from . import signing
 from .aibom import Artifact, CompileProvenance, build_aibom, sha256_file, write_aibom
 
 console = Console()
+
+# Filenames covering vocab/merges/config for the tokenizer implementations
+# `transformers.AutoTokenizer` supports (BPE, WordPiece, SentencePiece, ...).
+TOKENIZER_FILENAMES = (
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "vocab.txt",
+    "vocab.json",
+    "merges.txt",
+    "special_tokens_map.json",
+    "added_tokens.json",
+    "spiece.model",
+    "sentencepiece.bpe.model",
+    "config.json",
+)
 
 
 def run(*args: str, cwd: Path | None = None) -> str:
@@ -74,6 +95,56 @@ def find_weight_file(model_id: str) -> str:
             if name.endswith(suffix):
                 return name
     raise click.ClickException(f"No .safetensors/.bin weight file found for {model_id}")
+
+
+def _config_json_bytes(path: Path, model_id: str) -> bytes:
+    """Return ``config.json``'s bytes, injecting a resolved ``model_type`` if
+    the upstream file doesn't set one.
+    """
+    data = json.loads(path.read_text())
+    if "model_type" not in data:
+        from transformers import AutoConfig
+
+        data["model_type"] = AutoConfig.from_pretrained(model_id).model_type
+    return (json.dumps(data, indent=2, sort_keys=True) + "\n").encode()
+
+
+def fetch_tokenizer(model_id: str, out_dir: Path) -> Path:
+    """Download the tokenizer's vocab/config files (no model weights) for
+    ``model_id`` and package them into a single, deterministic tar.gz artifact
+    so it can be hashed, pushed, signed, and attested like any other stage.
+    """
+    info = HfApi().model_info(model_id)
+    available = {s.rfilename for s in info.siblings}
+    to_fetch = sorted(available & set(TOKENIZER_FILENAMES))
+    if not to_fetch:
+        raise click.ClickException(
+            f"No recognized tokenizer files ({', '.join(TOKENIZER_FILENAMES)}) "
+            f"found in {model_id}"
+        )
+
+    downloaded = [Path(hf_hub_download(repo_id=model_id, filename=name)) for name in to_fetch]
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    archive_path = out_dir / "tokenizer.tar.gz"
+    with tarfile.open(archive_path, "w:gz") as tar:
+        for path in downloaded:
+            real_path = path.resolve()
+            payload = (
+                _config_json_bytes(real_path, model_id)
+                if path.name == "config.json"
+                else real_path.read_bytes()
+            )
+            info_entry = tarfile.TarInfo(name=path.name)
+            info_entry.size = len(payload)
+            # Zero out mtime/uid/gid/uname so the archive's bytes (and hash)
+            # only depend on the tokenizer file contents, not on when/where
+            # they happened to be downloaded.
+            info_entry.mtime = 0
+            info_entry.uid = info_entry.gid = 0
+            info_entry.uname = info_entry.gname = ""
+            tar.addfile(info_entry, io.BytesIO(payload))
+    return archive_path
 
 
 def generate_source_aibom(model_id: str, out_dir: Path) -> Path:
@@ -171,6 +242,7 @@ class ChainResult:
     source_stage: Stage
     onnx_stage: Stage
     quant_stage: Stage
+    tokenizer_stage: Stage
 
 
 def push_sign_attest(
@@ -194,10 +266,11 @@ def verify_stage(stage: Stage, *, pub: Path) -> bool:
 
 
 def build_and_sign_chain(*, registry: str, model_id: str, work: Path) -> ChainResult:
-    """Build, push, sign, and attest the 3-stage AI-model provenance chain.
+    """Build, push, sign, and attest the 4-stage AI-model provenance chain.
 
-    Stage 0 (source checkpoint, BOM via aibomgen-cli) -> Stage 1 (ONNX export) ->
-    Stage 2 (INT8 quantization), each stage's AI-BOM chained to the previous
+    Stage 0 (source checkpoint, BOM via aibomgen-cli) -> Stage 0b (tokenizer,
+    chained to the source BOM) -> Stage 1 (ONNX export) -> Stage 2 (INT8
+    quantization), each compiled stage's AI-BOM chained to the previous
     stage's BOM hash. Returns the signed stages plus the keypair used to sign
     them, so callers can verify and/or consume the artifacts further.
     """
@@ -205,6 +278,7 @@ def build_and_sign_chain(*, registry: str, model_id: str, work: Path) -> ChainRe
     repo = f"supply-chain-demo/{name}"
     compiled_policy = Path(__file__).parent / "policy.cue"
     source_policy = Path(__file__).parent / "source_policy.cue"
+    tokenizer_policy = Path(__file__).parent / "tokenizer_policy.cue"
 
     key, pub = signing.generate_key_pair(work)
 
@@ -226,6 +300,36 @@ def build_and_sign_chain(*, registry: str, model_id: str, work: Path) -> ChainRe
         recorded_hash=source_hash, policy_path=source_policy, stage_name="source",
     )
     console.print(f"Pushed {source_stage.ref}")
+
+    console.rule("Stage 0b: tokenizer (vocab/config, chained to the same source repo)")
+    tokenizer_path = fetch_tokenizer(model_id, work / "tokenizer_out")
+    console.print(f"Tokenizer archive: {tokenizer_path.name} ({tokenizer_path.stat().st_size} bytes)")
+
+    tokenizer_bom = build_aibom(
+        model_name=f"{name}-tokenizer", model_version="1.0.0", framework="transformers",
+        output_artifact=Artifact.from_file(tokenizer_path),
+        source_artifact=None,
+        provenance=CompileProvenance(
+            compiler_name="huggingface_hub.hf_hub_download",
+            compiler_version=_package_version("huggingface_hub"),
+            source_format="huggingface-hub-repo", target_format="tokenizer-tar-gz",
+            target_device="n/a", parameters={"model_id": model_id},
+        ),
+        registry_ref=f"{registry}/{repo}",
+        source_aibom=Artifact.from_file(source_aibom_path),
+        component_type=ComponentType.DATA,
+    )
+    tokenizer_aibom_path = write_aibom(tokenizer_bom, work / "tokenizer_aibom.cdx.json")
+    console.print(Panel(JSON.from_data(tokenizer_bom), title=f"Tokenizer AI-BOM: {tokenizer_aibom_path}"))
+
+    tokenizer_hash = _bom_hash(tokenizer_bom)
+    tokenizer_stage = push_sign_attest(
+        registry=registry, repo=repo, tag="tokenizer-1.0.0",
+        artifact_path=tokenizer_path, aibom_path=tokenizer_aibom_path,
+        media_type="application/vnd.huggingface.tokenizer.tar+gzip", key=key,
+        recorded_hash=tokenizer_hash, policy_path=tokenizer_policy, stage_name="tokenizer",
+    )
+    console.print(f"Pushed {tokenizer_stage.ref}")
 
     console.rule("Stage 1: compile to ONNX (via onnx-optimum)")
     onnx_path = export_onnx(model_id, work / "onnx_out")
@@ -288,7 +392,7 @@ def build_and_sign_chain(*, registry: str, model_id: str, work: Path) -> ChainRe
     )
     console.print(f"Pushed {quant_stage.ref}")
 
-    return ChainResult(key, pub, source_stage, onnx_stage, quant_stage)
+    return ChainResult(key, pub, source_stage, onnx_stage, quant_stage, tokenizer_stage)
 
 
 @click.command()
@@ -306,13 +410,13 @@ def demo(registry: str, model_id: str) -> None:
         work = Path(tmp)
         chain = build_and_sign_chain(registry=registry, model_id=model_id, work=work)
         pub = chain.pub
-        source_stage, onnx_stage, quant_stage = (
-            chain.source_stage, chain.onnx_stage, chain.quant_stage,
+        source_stage, onnx_stage, quant_stage, tokenizer_stage = (
+            chain.source_stage, chain.onnx_stage, chain.quant_stage, chain.tokenizer_stage,
         )
 
         console.rule("Verify: signature + attestation policy (via cosign + CUE policies)")
         chain_ok = True
-        for stage in (source_stage, onnx_stage, quant_stage):
+        for stage in (source_stage, tokenizer_stage, onnx_stage, quant_stage):
             console.print(f"[bold]{stage.name}[/]")
             chain_ok &= verify_stage(stage, pub=pub)
         _print_verdict(chain_ok)

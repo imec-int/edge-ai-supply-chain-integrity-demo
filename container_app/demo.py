@@ -12,6 +12,7 @@ Usage:
 import json
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import time
 import urllib.error
@@ -72,7 +73,7 @@ def generate_sbom(image_ref: str, out_path: Path) -> int:
 
 def verify_chain(chain, *, label: str) -> bool:
     ok = True
-    for stage in (chain.source_stage, chain.onnx_stage, chain.quant_stage):
+    for stage in (chain.source_stage, chain.tokenizer_stage, chain.onnx_stage, chain.quant_stage):
         console.print(f"[bold]{label} / {stage.name}[/]")
         ok &= verify_stage(stage, pub=chain.pub)
     return ok
@@ -148,6 +149,17 @@ def demo(registry: str, model_id: str, container_bin: str, text: str, app_port: 
             "(source \u2192 onnx \u2192 quantized), it is safe to bake into the app image"
         )
         shutil.copy(chain.quant_stage.artifact_path, model_dir / "model.onnx")
+
+        tokenizer_dir = model_dir / "tokenizer"
+        if tokenizer_dir.exists():
+            shutil.rmtree(tokenizer_dir)
+        tokenizer_dir.mkdir(parents=True)
+        with tarfile.open(chain.tokenizer_stage.artifact_path) as tar:
+            tar.extractall(tokenizer_dir, filter="data")
+        console.print(
+            f"Baked verified tokenizer ({chain.tokenizer_stage.ref}) into {tokenizer_dir} - "
+            "no Hugging Face Hub fetch happens at container runtime"
+        )
 
         console.rule("Step 3: Build, sign, and verify the application image")
         container_build(container_bin, app_tag_ref, SCRIPT_DIR / "Containerfile")

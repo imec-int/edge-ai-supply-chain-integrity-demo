@@ -259,8 +259,8 @@ def push_sign_attest(
 
 
 def verify_stage(stage: Stage, *, pub: Path) -> bool:
-    _print_hash_check(stage.recorded_hash, stage.artifact_path)
-    return signing.verify(stage.ref, key=pub) and signing.verify_attestation_policy(
+    hash_ok = _print_hash_check(stage.recorded_hash, stage.artifact_path)
+    return hash_ok and signing.verify(stage.ref, key=pub) and signing.verify_attestation_policy(
         stage.ref, key=pub, predicate_type="cyclonedx", policy_path=stage.policy_path
     )
 
@@ -441,7 +441,7 @@ def _bom_hash(bom: dict) -> str:
     )
 
 
-def _print_hash_check(recorded_hash: str, actual_path: Path) -> None:
+def _print_hash_check(recorded_hash: str, actual_path: Path) -> bool:
     actual_hash = sha256_file(actual_path)
     match = recorded_hash == actual_hash
     table = Table(show_header=False, box=None)
@@ -453,6 +453,7 @@ def _print_hash_check(recorded_hash: str, actual_path: Path) -> None:
         f"[{'green' if match else 'red'}]{actual_hash}[/] {'(matches)' if match else '(mismatch)'}",
     )
     console.print(table)
+    return match
 
 
 def _print_verdict(ok: bool, *, expect_reject: bool = False) -> None:

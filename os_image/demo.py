@@ -41,7 +41,11 @@ def container_build(container_bin: str, tag_ref: str, containerfile: Path) -> No
 
 
 def container_push(container_bin: str, tag_ref: str) -> None:
-    run(container_bin, "push", "--tls-verify=false", tag_ref)
+    # Podman verifies TLS by default and needs this to push to the local,
+    # plain-HTTP registry used by this demo. Docker has no `push --tls-verify`
+    # flag; insecure registries are configured at the daemon level instead.
+    extra_args = ("--tls-verify=false",) if container_bin == "podman" else ()
+    run(container_bin, "push", *extra_args, tag_ref)
 
 
 def oras_resolve(tag_ref: str) -> str:

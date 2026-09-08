@@ -1,6 +1,6 @@
 # Supply-Chain Integrity Demo
 
-Runnable companion code for the ACM CCS 2026 demo paper *"DEMO: Full-Stack Supply-Chain Integrity Pipeline for Edge AI on Immutable Bootable Containers"*.
+Runnable companion code for the paper *"Full-Stack Supply-Chain Integrity Pipeline for Edge AI on Immutable Bootable Containers"*.
 
 The paper proposes a pipeline that signs and attests Bills of Materials at every layer of an edge AI stack (OS, container, AI model), then verifies and rejects tampered artifacts before deployment. This repo implements a local, hardware-free subset of that pipeline, using the same real, off-the-shelf tools (Kairos, Syft, Cosign, CycloneDX, aibomgen-cli) the paper describes.
 
